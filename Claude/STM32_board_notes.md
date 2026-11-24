@@ -7,7 +7,7 @@ Everything found and built so far. "Confirmed" means tested on the real board.
 | Item | Details |
 |---|---|
 | MCU board | NUCLEO-G474RE (STM32G474RE, Cortex-M4F, 170 MHz max) |
-| Shield | Blue mediT "STM32 Seminar V3" Arduino shield (no schematic available, pin map found by testing) |
+| Shield | Blue mediT "STM32 Seminar V3" shield (no schematic available, pin map found by testing) |
 | Shield parts | 4 push buttons (D-pad), potentiometer, piezo buzzer, 2 LEDs (LED2 green, LED3 yellow), infrared pulse sensor with IR LED (LED1), an amplifier-type IC next to the sensor |
 | IDE | STM32CubeIDE 2.3.0 (CubeMX is NOT built in since 2.0; use standalone STM32CubeMX 6.19.0 for the `.ioc`) |
 | Project | `STMBoard2`, BSP-based CubeMX project (`USE_NUCLEO_64`): no `LD2_Pin` / `B1_Pin` macros, so `main.c` defines its own |
@@ -18,7 +18,7 @@ HSI 16 MHz -> PLL: PLLM /4, PLLN x85, PLLR /2 -> **170 MHz** SYSCLK. AHB, APB1 a
 
 ## 2. Pin map
 
-| Function | Arduino pin | MCU pin | Peripheral | Status |
+| Function | Header pin | MCU pin | Peripheral | Status |
 |---|---|---|---|---|
 | Nucleo green LED (LD2) | D13 | PA5 | GPIO | confirmed |
 | Nucleo blue button (B1) | none | PC13 | GPIO input | confirmed: reads HIGH when pressed |
@@ -36,7 +36,7 @@ HSI 16 MHz -> PLL: PLLM /4, PLLN x85, PLLR /2 -> **170 MHz** SYSCLK. AHB, APB1 a
 Not the pot: A0 (it is the pulse sensor) and A2 / PA4 (ADC2_IN17, tested).
 LED1 (under the pulse sensor) is not on any free pin (see section 6).
 
-### Full Arduino header map (Nucleo-64)
+### Full header map (Nucleo-64, D0..D15 and A0..A5 labels)
 
 | Pin | MCU | Pin | MCU |
 |---|---|---|---|

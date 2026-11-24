@@ -17,11 +17,13 @@ Firmware and a browser dashboard for a NUCLEO-G474RE board with a blue mediT "ST
 | | |
 |---|---|
 | MCU board | [NUCLEO-G474RE](https://www.st.com/en/evaluation-tools/nucleo-g474re.html) (STM32G474RE, Cortex-M4F at 170 MHz) |
-| Board manual | [UM2505, STM32G4 Nucleo-64 boards](https://www.st.com/resource/en/user_manual/um2505-stm32g4-nucleo64-boards-mb1367-stmicroelectronics.pdf). The Arduino and morpho connector pinouts are in its connector tables. |
+| Board manual | [UM2505, STM32G4 Nucleo-64 boards](https://www.st.com/resource/en/user_manual/um2505-stm32g4-nucleo64-boards-mb1367-stmicroelectronics.pdf). The header pinouts (the D0 to D15 and A0 to A5 labels, plus the full morpho connectors) are in its connector tables. |
 | Shield | mediT "STM32 Seminar V3". I couldn't find a schematic or any documentation online, so the pin map below comes from testing each part on the real board. |
 | IDE | STM32CubeIDE 2.3.0, plus standalone STM32CubeMX 6.19.0 for the `.ioc` file |
 
-![Pin map from shield parts to Arduino pins, MCU pins and peripherals](docs/pinmap.svg)
+The shield plugs into the Nucleo's headers, whose pins are labelled D0 to D15 and A0 to A5. Each label is just a name for one STM32 pin (D9 is PC7, A0 is PA0, and so on), and the firmware only uses the STM32 names.
+
+![Pin map from shield parts to header pins, MCU pins and peripherals](docs/pinmap.svg)
 
 A few things that took a while to find out:
 

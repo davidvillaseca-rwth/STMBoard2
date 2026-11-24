@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Analog finder: reads all six Arduino analog pins (A0..A5) 100 times a second
+/* Analog finder: reads all six analog header pins (A0..A5) 100 times a second
    and streams them to analog_finder.html (or PuTTY).
    Used to find out what the bottom-left sensor block (LED1 + square detector)
    is wired to. The previous debug platform is saved in Claude/main_debug_platform.c.
