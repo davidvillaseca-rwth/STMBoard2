@@ -23,7 +23,7 @@ Firmware and a browser dashboard for a NUCLEO-G474RE board with a blue mediT "ST
 
 The shield plugs into the Nucleo's headers, whose pins are labelled D0 to D15 and A0 to A5. Each label is just a name for one STM32 pin (D9 is PC7, A0 is PA0, and so on), and the firmware only uses the STM32 names.
 
-![Pin map from shield parts to header pins, MCU pins and peripherals](docs/pinmap.svg)
+![Pin map from shield parts to header pins, MCU pins and peripherals](docs/pin_map.svg)
 
 A few things that took a while to find out:
 
