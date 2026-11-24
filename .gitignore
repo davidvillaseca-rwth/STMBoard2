@@ -1,0 +1,9 @@
+# CubeIDE build output
+Debug/
+Release/
+
+# Machine-specific debug launch config (contains local paths)
+*.launch
+
+# Eclipse workspace metadata
+.metadata/

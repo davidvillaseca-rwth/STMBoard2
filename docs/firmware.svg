@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 500" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="13">
+  <rect width="960" height="500" rx="12" fill="#ffffff"/>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#56606d"/></marker>
+  </defs>
+  <text x="30" y="40" font-size="20" font-weight="700" fill="#161b21">How the firmware is split up</text>
+  <text x="30" y="62" fill="#5d6876">Two timer interrupts do the time-critical work. The main loop never waits, so nothing gets missed.</text>
+
+  <!-- lanes -->
+  <rect x="30" y="85" width="600" height="110" rx="10" fill="#f6f0ff" stroke="#c58bff"/>
+  <text x="46" y="108" font-weight="700" fill="#161b21">TIM7 interrupt · 20 kHz · priority 1 (highest)</text>
+  <rect x="46" y="120" width="270" height="60" rx="8" fill="#ffffff" stroke="#dde2e8"/>
+  <text x="60" y="144" font-weight="600" fill="#161b21">LED dimming</text>
+  <text x="60" y="164" fill="#5d6876">100-step software PWM → 200 Hz, no flicker</text>
+  <rect x="332" y="120" width="282" height="60" rx="8" fill="#ffffff" stroke="#dde2e8"/>
+  <text x="346" y="144" font-weight="600" fill="#161b21">Serial in and out</text>
+  <text x="346" y="164" fill="#5d6876">one byte per tick from / to ring buffers</text>
+
+  <rect x="30" y="215" width="600" height="110" rx="10" fill="#eaf2ff" stroke="#1f6fd6"/>
+  <text x="46" y="238" font-weight="700" fill="#161b21">TIM6 interrupt · 500 Hz · priority 2</text>
+  <rect x="46" y="250" width="270" height="60" rx="8" fill="#ffffff" stroke="#dde2e8"/>
+  <text x="60" y="274" font-weight="600" fill="#161b21">Read A0 (pulse sensor)</text>
+  <text x="60" y="294" fill="#5d6876">16 conversions, about 100 µs</text>
+  <rect x="332" y="250" width="282" height="60" rx="8" fill="#ffffff" stroke="#dde2e8"/>
+  <text x="346" y="274" font-weight="600" fill="#161b21">Filter + beat detection</text>
+  <text x="346" y="294" fill="#5d6876">100 Hz; flashes LEDs, triggers the beep</text>
+
+  <rect x="30" y="345" width="600" height="130" rx="10" fill="#f3f5f8" stroke="#9aa4b0"/>
+  <text x="46" y="368" font-weight="700" fill="#161b21">Main loop · as fast as it can go</text>
+  <rect x="46" y="380" width="180" height="80" rx="8" fill="#ffffff" stroke="#dde2e8"/>
+  <text x="58" y="403" font-weight="600" fill="#161b21">Buttons</text>
+  <text x="58" y="422" fill="#5d6876">D-pad → LED brightness</text>
+  <text x="58" y="440" fill="#5d6876">B1 → beep on / off</text>
+  <rect x="238" y="380" width="180" height="80" rx="8" fill="#ffffff" stroke="#dde2e8"/>
+  <text x="250" y="403" font-weight="600" fill="#161b21">Potentiometer</text>
+  <text x="250" y="422" fill="#5d6876">read 25×/s on ADC2</text>
+  <text x="250" y="440" fill="#5d6876">→ buzzer volume</text>
+  <rect x="430" y="380" width="184" height="80" rx="8" fill="#ffffff" stroke="#dde2e8"/>
+  <text x="442" y="403" font-weight="600" fill="#161b21">Telemetry + commands</text>
+  <text x="442" y="422" fill="#5d6876">builds P / S lines,</text>
+  <text x="442" y="440" fill="#5d6876">parses page commands</text>
+
+  <!-- PC side -->
+  <rect x="720" y="100" width="210" height="230" rx="12" fill="#ffffff" stroke="#161b21" stroke-width="1.5"/>
+  <text x="825" y="128" text-anchor="middle" font-weight="700" fill="#161b21">ppg.html on the PC</text>
+  <text x="825" y="146" text-anchor="middle" fill="#5d6876">Chrome / Edge, Web Serial</text>
+  <g fill="#161b21" font-size="12">
+    <text x="740" y="176">• heart rate + quality</text>
+    <text x="740" y="196">• waveform, raw level,</text>
+    <text x="752" y="212">beat-interval chart</text>
+    <text x="740" y="232">• live D-pad, B1, pot dial</text>
+    <text x="740" y="252">• LED mode + brightness</text>
+    <text x="740" y="272">• beep, polarity</text>
+    <text x="740" y="292">• event log, demo mode</text>
+  </g>
+
+  <!-- arrows -->
+  <defs>
+    <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#56606d"/></marker>
+  </defs>
+  <g stroke="#56606d" stroke-width="1.6" fill="none">
+    <path d="M600 377 V338 H660 V160 H617" marker-start="url(#b)" marker-end="url(#b)"/>
+    <path d="M633 140 H717" marker-start="url(#b)" marker-end="url(#b)"/>
+    <path d="M480 310 V377" marker-end="url(#b)"/>
+  </g>
+  <text x="672" y="250" font-size="11" fill="#5d6876" transform="rotate(90 672 250)" text-anchor="middle">lines out · commands in</text>
+  <text x="675" y="130" font-size="11" fill="#5d6876" text-anchor="middle">USB serial</text>
+  <text x="488" y="350" font-size="11" fill="#5d6876">samples queue</text>
+</svg>

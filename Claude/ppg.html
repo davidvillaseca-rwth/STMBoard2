@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Board Monitor</title>
+<style>
+  :root {
+    --bg:#0e1114; --card:#161b21; --card2:#1c232b; --line:#28313b; --text:#e7eaee; --dim:#8a94a2; --faint:#56606d;
+    --accent:#4fa3ff; --sig:#4fa3ff; --thr:#ffcc33; --beat:#ff4d5e; --raw:#6fd39a; --tach:#c58bff;
+    --green:#3ddc84; --yellow:#ffd23f; --blue:#3d7bff; --plot:#0a0d10; --grid:#1d242c;
+    --q0:#8a94a2; --q1:#ff7a45; --q2:#ffcc33; --q3:#3ddc84; --q4:#ff9f43;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f3f5f8; --card:#ffffff; --card2:#f6f8fa; --line:#dde2e8; --text:#161b21; --dim:#5d6876; --faint:#9aa4b0;
+            --plot:#fafbfc; --grid:#eceff3; --sig:#1f6fd6; --raw:#1e9e5a; --thr:#c99700; --yellow:#e0aa00; --green:#1fb866; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; padding:16px; }
+  header { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
+  h1 { font-size:18px; margin:0 8px 0 0; font-weight:650; }
+  .pill { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; background:var(--card); border:1px solid var(--line); color:var(--dim); font-size:13px; }
+  .pill .dot { width:8px; height:8px; border-radius:50%; background:var(--faint); }
+  .pill.live .dot { background:var(--green); box-shadow:0 0 8px var(--green); }
+  .pill.demo .dot { background:var(--thr); }
+  button { background:var(--card2); color:var(--text); border:1px solid var(--line); border-radius:7px; padding:6px 12px; cursor:pointer; font:inherit; }
+  button:hover { border-color:var(--faint); }
+  button.on { border-color:var(--accent); color:var(--accent); }
+  .grow { flex:1; }
+
+  .grid { display:grid; gap:12px; }
+  .row1 { grid-template-columns: minmax(240px, 320px) 1fr; }
+  .row3 { grid-template-columns: 1fr 1fr; }
+  @media (max-width:860px) { .row1, .row3 { grid-template-columns:1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; min-width:0; }
+  .card h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); margin:0 0 10px; font-weight:600; display:flex; justify-content:space-between; gap:8px; }
+  .card h2 span { text-transform:none; letter-spacing:0; font-weight:500; }
+  .mt { margin-top:12px; }
+
+  /* heart rate */
+  .bpm { display:flex; align-items:center; gap:14px; }
+  .bpm .num { font-size:68px; font-weight:700; font-variant-numeric:tabular-nums; line-height:1; }
+  .bpm .unit { color:var(--dim); font-size:13px; }
+  .heart { width:46px; height:46px; color:var(--beat); transition:transform .08s ease-out; flex:none; }
+  .heart.pulse { transform:scale(1.3); }
+  .q { margin-top:12px; font-weight:600; display:flex; align-items:center; gap:6px; }
+  .q::before { content:""; width:8px; height:8px; border-radius:50%; background:currentColor; }
+  .tip { color:var(--dim); font-size:13px; }
+  .stats { display:grid; grid-template-columns:repeat(3, 1fr); gap:10px 8px; margin-top:14px; padding-top:12px; border-top:1px solid var(--line); }
+  .stats div { color:var(--dim); font-size:11px; }
+  .stats b { display:block; color:var(--text); font-size:17px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .hrvbtn { display:flex; gap:6px; margin-top:12px; flex-wrap:wrap; }
+
+  /* shield */
+  .shield { display:grid; grid-template-columns: auto auto 1fr; gap:14px 22px; align-items:start; }
+  @media (max-width:640px) { .shield { grid-template-columns:1fr 1fr; } .leds { grid-column:1 / -1; } }
+  .part { background:var(--card2); border:1px solid var(--line); border-radius:10px; padding:12px; }
+  .part .t { color:var(--dim); font-size:12px; margin-bottom:8px; display:flex; justify-content:space-between; gap:6px; }
+  .dpad { display:grid; grid-template-columns:repeat(3, 44px); grid-template-rows:repeat(3, 44px); gap:4px; justify-content:center; }
+  .key { border-radius:9px; background:var(--card); border:1px solid var(--line); display:flex; align-items:center; justify-content:center; color:var(--dim); font-size:11px; flex-direction:column; transition:background .05s; user-select:none; }
+  .key svg { width:16px; height:16px; }
+  .key.down { background:var(--accent); color:#fff; border-color:var(--accent); box-shadow:0 0 12px color-mix(in srgb, var(--accent) 60%, transparent); }
+  .key small { font-size:9px; opacity:.8; font-variant-numeric:tabular-nums; }
+  .b1row { display:flex; align-items:center; gap:10px; margin-top:12px; justify-content:center; }
+  .b1 { width:40px; height:40px; border-radius:50%; background:#2a4fa8; border:3px solid #6f8fd8; transition:transform .05s; }
+  .b1.down { transform:scale(.88); background:var(--blue); box-shadow:0 0 14px var(--blue); }
+  .b1lbl { font-size:12px; color:var(--dim); line-height:1.3; }
+  .pot svg { display:block; margin:0 auto; }
+  .potv { text-align:center; font-variant-numeric:tabular-nums; }
+  .potv b { font-size:22px; }
+  .potv div { color:var(--dim); font-size:12px; }
+  .leds { display:grid; gap:10px; }
+  .led { display:grid; grid-template-columns:auto 1fr; gap:4px 12px; align-items:center; }
+  .bulb { width:34px; height:34px; border-radius:50%; grid-row:span 2; border:2px solid var(--line); transition:background .04s, box-shadow .04s; }
+  .led .name { font-weight:600; display:flex; justify-content:space-between; gap:8px; }
+  .led .name span { color:var(--dim); font-weight:400; font-size:12px; }
+  .ctl { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
+  .seg button { border:0; border-radius:0; padding:4px 10px; background:var(--card); font-size:12px; }
+  .seg button + button { border-left:1px solid var(--line); }
+  .seg button.sel { background:var(--accent); color:#fff; }
+  input[type=range] { flex:1; min-width:90px; accent-color:var(--accent); }
+  .pct { font-variant-numeric:tabular-nums; color:var(--dim); font-size:12px; width:34px; text-align:right; }
+  .buzz { display:flex; align-items:center; gap:10px; }
+  .buzz svg { width:26px; height:26px; color:var(--dim); }
+  .buzz.ring svg { color:var(--thr); }
+  .vbar { flex:1; min-width:80px; height:6px; border-radius:3px; background:var(--grid); overflow:hidden; }
+  .vbar i { display:block; height:100%; width:0; background:var(--thr); transition:width .1s; }
+
+  /* charts */
+  .chart canvas { width:100%; display:block; background:var(--plot); border-radius:8px; }
+  .key2 span { margin-left:12px; }
+  .key2 i { display:inline-block; width:10px; height:3px; vertical-align:middle; margin-right:4px; border-radius:2px; }
+  .log { height:150px; overflow:auto; font:12px/1.5 ui-monospace, Consolas, monospace; color:var(--dim); }
+  .log div b { color:var(--text); font-weight:500; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Board monitor</h1>
+  <span class="pill" id="pill"><span class="dot"></span><span id="status">not connected</span></span>
+  <span class="grow"></span>
+  <button id="connect">Connect</button>
+  <button id="demo">Demo</button>
+</header>
+
+<div class="grid row1">
+  <!-- heart rate -->
+  <section class="card">
+    <h2>Heart rate <span id="lvl"></span></h2>
+    <div class="bpm">
+      <svg class="heart" id="heart" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21s-7.5-4.6-9.5-9.2C1 8.4 3.2 5 6.6 5c2 0 3.4 1.1 4.2 2.4h2.4C14 6.1 15.4 5 17.4 5 20.8 5 23 8.4 21.5 11.8 19.5 16.4 12 21 12 21z"/></svg>
+      <div><div class="num" id="bpm">--</div><div class="unit">beats per minute</div></div>
+    </div>
+    <div class="q" id="q" style="color:var(--q0)">Not connected</div>
+    <div class="tip" id="tip">Click Connect, then place a fingertip over LED1 and the square sensor above it.</div>
+    <div class="stats">
+      <div>last beat<b id="ibi">—</b></div>
+      <div>mean<b id="mibi">—</b></div>
+      <div>beats<b id="nb">0</b></div>
+      <div>SDNN<b id="sdnn">—</b></div>
+      <div>RMSSD<b id="rmssd">—</b></div>
+      <div>polarity<b id="polv">—</b></div>
+    </div>
+    <div class="hrvbtn">
+      <button id="pol">Polarity: auto</button>
+      <button id="clear">Reset stats</button>
+    </div>
+  </section>
+
+  <!-- shield -->
+  <section class="card">
+    <h2>Shield <span>live from the board</span></h2>
+    <div class="shield">
+      <div class="part">
+        <div class="t"><span>Buttons</span><span id="bcount"></span></div>
+        <div class="dpad">
+          <span></span>
+          <div class="key" id="k3"><svg viewBox="0 0 16 16"><path d="M8 3l5 7H3z" fill="currentColor"/></svg><small>UP</small></div>
+          <span></span>
+          <div class="key" id="k0"><svg viewBox="0 0 16 16"><path d="M3 8l7-5v10z" fill="currentColor"/></svg><small>LEFT</small></div>
+          <span></span>
+          <div class="key" id="k2"><svg viewBox="0 0 16 16"><path d="M13 8l-7 5V3z" fill="currentColor"/></svg><small>RIGHT</small></div>
+          <span></span>
+          <div class="key" id="k1"><svg viewBox="0 0 16 16"><path d="M8 13L3 6h10z" fill="currentColor"/></svg><small>DOWN</small></div>
+          <span></span>
+        </div>
+        <div class="b1row"><div class="b1" id="k4"></div><div class="b1lbl"><b>B1</b> (Nucleo)<br>beep on / off</div></div>
+      </div>
+
+      <div class="part pot">
+        <div class="t"><span>Potentiometer</span><span>A1 · buzzer volume</span></div>
+        <svg width="140" height="120" viewBox="0 0 140 120" aria-hidden="true">
+          <path id="potbg" fill="none" stroke="var(--grid)" stroke-width="10" stroke-linecap="round"/>
+          <path id="potarc" fill="none" stroke="var(--accent)" stroke-width="10" stroke-linecap="round"/>
+          <circle cx="70" cy="66" r="30" fill="var(--card)" stroke="var(--line)" stroke-width="2"/>
+          <line id="potneedle" x1="70" y1="66" x2="70" y2="42" stroke="var(--text)" stroke-width="4" stroke-linecap="round"/>
+        </svg>
+        <div class="potv"><b id="potpct">—</b><div id="potraw">—</div></div>
+      </div>
+
+      <div class="leds">
+        <div class="part led">
+          <div class="bulb" id="bulb2"></div>
+          <div class="name">LED2 green <span>D6</span></div>
+          <div class="ctl">
+            <div class="seg" id="seg2"><button data-m="0">Off</button><button data-m="1">On</button><button data-m="2">Beat</button></div>
+            <input type="range" id="sl2" min="0" max="100" value="10"><span class="pct" id="pc2">10%</span>
+          </div>
+        </div>
+        <div class="part led">
+          <div class="bulb" id="bulb3"></div>
+          <div class="name">LED3 yellow <span>D7</span></div>
+          <div class="ctl">
+            <div class="seg" id="seg3"><button data-m="0">Off</button><button data-m="1">On</button><button data-m="2">Beat</button></div>
+            <input type="range" id="sl3" min="0" max="100" value="10"><span class="pct" id="pc3">10%</span>
+          </div>
+        </div>
+        <div class="part buzz" id="buzz">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg>
+          <div class="grow"><b>Buzzer</b> <span class="tip">beep on every heartbeat</span>
+            <div class="ctl" style="margin-top:4px"><span class="tip">volume (pot)</span><div class="vbar"><i id="vbar"></i></div><span class="pct" id="volv">—</span></div></div>
+          <button id="beep">Off</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<section class="card chart mt">
+  <h2>Pulse waveform, 10 s <span class="key2"><span><i style="background:var(--sig)"></i>filtered</span><span><i style="background:var(--thr)"></i>threshold</span><span><i style="background:var(--beat)"></i>beat</span></span></h2>
+  <canvas id="cf" width="1400" height="260"></canvas>
+</section>
+
+<div class="grid row3 mt">
+  <section class="card chart">
+    <h2>Raw sensor level <span id="rawspan"></span></h2>
+    <canvas id="cr" width="700" height="150"></canvas>
+  </section>
+  <section class="card chart">
+    <h2>Beat-to-beat interval <span id="tachspan"></span></h2>
+    <canvas id="ct" width="700" height="150"></canvas>
+  </section>
+</div>
+
+<section class="card mt">
+  <h2>Event log</h2>
+  <div class="log" id="log"></div>
+</section>
+
+<script>
+const WIN = 1000;                                   // 10 s of P lines at 100/s
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const NAMES = ['LEFT', 'DOWN', 'RIGHT', 'UP', 'B1'];
+const KEYLBL = ['LED3 −', 'LED2 −', 'LED3 +', 'LED2 +'];          // what each D-pad key does
+const KEYLOG = ['LED3 brightness down', 'LED2 brightness down', 'LED3 brightness up', 'LED2 brightness up', 'beep toggled on the board'];
+const QTXT = [
+  ['No pulse', 'Place a fingertip over LED1 and the square sensor above it. Light, steady pressure.', '--q0'],
+  ['Saturated', 'The ADC is at its limit. Press more lightly, or shade the sensor from strong light.', '--q1'],
+  ['Searching…', 'Pulse seen, collecting beats. Keep still.', '--q2'],
+  ['Good signal', 'Steady beats. Keep still for the variability numbers.', '--q3'],
+  ['Irregular', 'Intervals jump around: keep still, light steady pressure, shade from room light.', '--q4'],
+];
+
+const filt = [], thr = [], raw = [], beats = [];
+let idx = 0, ibis = [], nbeats = 0, P = null, S = null, prevBtn = 0, counts = [0, 0, 0, 0, 0];
+let writer = null, demoTimer = null, dragging = { 2: false, 3: false };
+
+/* ---------- incoming lines ---------- */
+function onLine(line) {
+  const f = line.split(',');
+  if (f[0] === 'P' && f.length >= 13) {
+    const v = f.slice(1).map(Number);
+    P = { ms:v[0], raw:v[1], filt:v[2] / 100, thr:v[3] / 100, bpm10:v[4], beat:v[5], ibi:v[6], q:v[7], pol:v[8], btn:v[9], l2:v[10], l3:v[11] };
+    push(filt, P.filt); push(thr, P.thr); push(raw, P.raw / 16);
+    if (P.beat) {
+      beats.push(idx); nbeats++;
+      $('heart').classList.add('pulse'); setTimeout(() => $('heart').classList.remove('pulse'), 110);
+      if (P.ibi > 0) { ibis.push(P.ibi); if (ibis.length > 60) ibis.shift(); }
+    }
+    while (beats.length && beats[0] < idx - WIN) beats.shift();
+    idx++;
+    const ch = P.btn ^ prevBtn;
+    for (let i = 0; i < 5; i++) if ((ch >> i) & 1 && (P.btn >> i) & 1) {
+      counts[i]++;
+      log(`<b>${NAMES[i]}</b> pressed: ${KEYLOG[i]}`);
+    }
+    prevBtn = P.btn;
+  } else if (f[0] === 'S' && f.length >= 9) {
+    const v = f.slice(1).map(Number);
+    S = { ms:v[0], pot:v[1], polmode:v[2], beep:v[3], m2:v[4], m3:v[5], s2:v[6], s3:v[7], vol:v[8] };
+  } else if (line.startsWith('#')) log(line.slice(1).trim());
+}
+function push(a, x) { a.push(x); if (a.length > WIN) a.shift(); }
+
+function log(html) {
+  const el = $('log'), d = document.createElement('div');
+  const t = new Date().toLocaleTimeString();
+  d.innerHTML = `<span>${t}</span>  ${html}`;
+  el.prepend(d);
+  while (el.children.length > 200) el.lastChild.remove();
+}
+
+/* ---------- commands ---------- */
+async function send(cmd) {
+  if (demoTimer) demoCmd(cmd);
+  else if (writer) { try { await writer.write(new TextEncoder().encode(cmd + '\n')); } catch (e) { log('send failed: ' + e.message); } }
+  else { log('not connected'); return; }
+  log('sent <b>' + cmd + '</b>');
+}
+$('pol').onclick = () => send('i');
+$('beep').onclick = () => send('b');
+$('clear').onclick = () => { ibis = []; nbeats = 0; log('stats reset'); };
+for (const n of [2, 3]) {
+  $('seg' + n).querySelectorAll('button').forEach(b => b.onclick = () => send(n + 'm' + b.dataset.m));
+  const sl = $('sl' + n);
+  let t = 0;
+  sl.addEventListener('pointerdown', () => dragging[n] = true);
+  sl.addEventListener('pointerup', () => { dragging[n] = false; send(n + ':' + sl.value); });
+  sl.addEventListener('input', () => {
+    $('pc' + n).textContent = sl.value + '%';
+    const now = performance.now();
+    if (now - t > 80) { t = now; quiet(n + ':' + sl.value); }
+  });
+  sl.addEventListener('change', () => send(n + ':' + sl.value));
+}
+function quiet(cmd) { if (demoTimer) demoCmd(cmd); else if (writer) writer.write(new TextEncoder().encode(cmd + '\n')).catch(() => {}); }
+
+/* ---------- drawing ---------- */
+const potGeo = (() => {                                       // 270° dial
+  const cx = 70, cy = 66, r = 46, a0 = 135, a1 = 405;
+  const pt = a => [cx + r * Math.cos(a * Math.PI / 180), cy + r * Math.sin(a * Math.PI / 180)];
+  const arc = (from, to) => { const [x0, y0] = pt(from), [x1, y1] = pt(to); return `M${x0} ${y0} A${r} ${r} 0 ${to - from > 180 ? 1 : 0} 1 ${x1} ${y1}`; };
+  $('potbg').setAttribute('d', arc(a0, a1));
+  return { cx, cy, a0, a1, arc };
+})();
+
+function ledLook(n, lit, s) {
+  const col = css(n === 2 ? '--green' : '--yellow');
+  const b = $('bulb' + n);
+  const k = Math.max(0.18, (s * s / 100) / 100);              // perceived brightness follows the duty
+  if (lit && s > 0) {
+    b.style.background = `color-mix(in srgb, ${col} ${Math.round(35 + 65 * k)}%, transparent)`;
+    b.style.boxShadow = `0 0 ${Math.round(6 + 22 * k)}px ${col}`;
+    b.style.borderColor = col;
+  } else { b.style.background = 'transparent'; b.style.boxShadow = 'none'; b.style.borderColor = css('--line'); }
+}
+
+function stats() {
+  if (P) {
+    $('bpm').textContent = P.bpm10 ? Math.round(P.bpm10 / 10) : '--';
+    const [t, tip, col] = QTXT[P.q] || QTXT[0];
+    $('q').textContent = t; $('q').style.color = css(col); $('tip').textContent = tip;
+    $('polv').textContent = P.pol > 0 ? 'normal' : 'inverted';
+    $('lvl').textContent = (P.raw / 16 * 3.3 / 4095).toFixed(3) + ' V at A0';
+    for (let i = 0; i < 5; i++) $('k' + i).classList.toggle('down', !!((P.btn >> i) & 1));
+    for (let i = 0; i < 4; i++) { const k = $('k' + i); k.querySelector('small').textContent = KEYLBL[i]; k.title = NAMES[i] + ': ' + KEYLBL[i] + ' (' + counts[i] + ' presses)'; }
+    $('bcount').textContent = counts.reduce((a, b) => a + b, 0) + ' presses';
+  }
+  if (S) {
+    const pct = S.pot / 4095;
+    $('potpct').textContent = Math.round(pct * 100) + '%';
+    $('potraw').textContent = S.pot + ' · ' + (pct * 3.3).toFixed(2) + ' V';
+    const a = potGeo.a0 + pct * (potGeo.a1 - potGeo.a0);
+    $('potarc').setAttribute('d', pct > 0.003 ? potGeo.arc(potGeo.a0, a) : '');
+    const rad = a * Math.PI / 180;
+    $('potneedle').setAttribute('x2', potGeo.cx + 22 * Math.cos(rad));
+    $('potneedle').setAttribute('y2', potGeo.cy + 22 * Math.sin(rad));
+    $('pol').textContent = 'Polarity: ' + (S.polmode === 0 ? 'auto' : S.polmode === 1 ? 'normal' : 'inverted');
+    $('beep').textContent = S.beep ? 'On' : 'Off'; $('beep').classList.toggle('on', !!S.beep);
+    if (S.vol !== undefined && !isNaN(S.vol)) {           // vol is 0..50 % duty; 50 = loudest
+      const vp = Math.round(S.vol / 50 * 100);
+      $('vbar').style.width = vp + '%'; $('volv').textContent = vp + '%';
+    }
+    for (const n of [2, 3]) {
+      const m = S['m' + n], s = S['s' + n];
+      $('seg' + n).querySelectorAll('button').forEach(b => b.classList.toggle('sel', +b.dataset.m === m));
+      if (!dragging[n] && document.activeElement !== $('sl' + n)) { $('sl' + n).value = s; $('pc' + n).textContent = s + '%'; }
+    }
+  }
+  if (P && S) { ledLook(2, P.l2, S.s2); ledLook(3, P.l3, S.s3); }
+  $('buzz').classList.toggle('ring', !!(S && S.beep && P && P.beat));
+  $('nb').textContent = nbeats;
+  const w = ibis.slice(-30);
+  if (w.length) {
+    $('ibi').textContent = w[w.length - 1] + ' ms';
+    const m = w.reduce((s, x) => s + x, 0) / w.length;
+    $('mibi').textContent = m.toFixed(0) + ' ms';
+    if (w.length >= 3) {
+      const sd = Math.sqrt(w.reduce((s, x) => s + (x - m) ** 2, 0) / (w.length - 1));
+      let ss = 0; for (let i = 1; i < w.length; i++) ss += (w[i] - w[i - 1]) ** 2;
+      $('sdnn').textContent = sd.toFixed(0) + ' ms';
+      $('rmssd').textContent = Math.sqrt(ss / (w.length - 1)).toFixed(0) + ' ms';
+    }
+  } else { ['ibi', 'mibi', 'sdnn', 'rmssd'].forEach(id => $(id).textContent = '—'); }
+}
+
+function grid(g, w, h) {
+  g.strokeStyle = css('--grid'); g.lineWidth = 1;
+  for (let k = 1; k < 10; k++) { const x = k / 10 * w; g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke(); }
+}
+function trace(g, a, col, lo, hi, w, h, dash) {
+  if (!a.length) return;
+  g.strokeStyle = col; g.lineWidth = 2; g.setLineDash(dash || []); g.beginPath();
+  const off = WIN - a.length;
+  a.forEach((x, k) => { const px = (k + off) / (WIN - 1) * w, py = h - 10 - (x - lo) / (hi - lo) * (h - 20); k ? g.lineTo(px, py) : g.moveTo(px, py); });
+  g.stroke(); g.setLineDash([]);
+}
+
+function draw() {
+  let c = $('cf'), g = c.getContext('2d'), w = c.width, h = c.height;
+  g.clearRect(0, 0, w, h); grid(g, w, h);
+  if (filt.length) {
+    let lo = Math.min(...filt, -1), hi = Math.max(...filt, 1);
+    const pad = (hi - lo) * 0.1; lo -= pad; hi += pad;
+    trace(g, thr, css('--thr'), lo, hi, w, h, [8, 6]);
+    trace(g, filt, css('--sig'), lo, hi, w, h);
+    g.fillStyle = css('--beat');
+    const off = WIN - filt.length, first = idx - filt.length;
+    beats.forEach(b => {
+      const k = b - first; if (k < 0 || k >= filt.length) return;
+      const px = (k + off) / (WIN - 1) * w, py = h - 10 - (filt[k] - lo) / (hi - lo) * (h - 20);
+      g.beginPath(); g.arc(px, py, 6, 0, 7); g.fill();
+    });
+  }
+  c = $('cr'); g = c.getContext('2d'); w = c.width; h = c.height; g.clearRect(0, 0, w, h); grid(g, w, h);
+  if (raw.length) {
+    let lo = Math.min(...raw), hi = Math.max(...raw);
+    if (hi - lo < 4) { const m = (hi + lo) / 2; lo = m - 2; hi = m + 2; }
+    trace(g, raw, css('--raw'), lo, hi, w, h);
+    $('rawspan').textContent = 'span ' + ((hi - lo) * 3.3 / 4095 * 1000).toFixed(1) + ' mV';
+  }
+  c = $('ct'); g = c.getContext('2d'); w = c.width; h = c.height; g.clearRect(0, 0, w, h);
+  if (ibis.length > 1) {
+    const lo = Math.min(...ibis) - 20, hi = Math.max(...ibis) + 20;
+    const X = k => 10 + k / 59 * (w - 20), Y = x => h - 10 - (x - lo) / (hi - lo) * (h - 20);
+    g.strokeStyle = css('--tach'); g.fillStyle = css('--tach'); g.lineWidth = 2; g.beginPath();
+    ibis.forEach((x, k) => k ? g.lineTo(X(k), Y(x)) : g.moveTo(X(k), Y(x))); g.stroke();
+    ibis.forEach((x, k) => { g.beginPath(); g.arc(X(k), Y(x), 3, 0, 7); g.fill(); });
+    $('tachspan').textContent = Math.min(...ibis) + '–' + Math.max(...ibis) + ' ms';
+  }
+  stats();
+  requestAnimationFrame(draw);
+}
+
+function setPill(kind, text) { $('pill').className = 'pill ' + kind; $('status').textContent = text; }
+
+/* ---------- serial ---------- */
+$('connect').onclick = async () => {
+  if (!('serial' in navigator)) { setPill('', 'Web Serial not available: use Chrome or Edge'); return; }
+  try {
+    stopDemo();
+    const port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+    writer = port.writable.getWriter();
+    setPill('', 'connected, waiting for data (press reset on the Nucleo if nothing comes)');
+    const reader = port.readable.pipeThrough(new TextDecoderStream()).getReader();
+    let buf = '', got = false;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += value;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const ln = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+        if (!got && ln.startsWith('P,')) { got = true; setPill('live', 'live'); log('receiving data'); }
+        onLine(ln);
+      }
+    }
+  } catch (e) { setPill('', 'error: ' + e.message); writer = null; }
+};
+
+/* ---------- demo: synthetic board in the same line format ---------- */
+const D = { t:0, phase:0, since:0, last:0, env:0, armed:0, ibis:[], pol:0, beep:0, m:[2, 0], s:[10, 10], flash:0, btn:0, btnT:0, prev:[0, 0] };
+function demoCmd(c) {
+  if (c === 'i') D.pol = D.pol === 0 ? 1 : D.pol === 1 ? -1 : 0;
+  else if (c === 'b') D.beep ^= 1;
+  else if (/^[23]m[012]$/.test(c)) D.m[c[0] - 2] = +c[2];
+  else if (/^[23]:\d+$/.test(c)) D.s[c[0] - 2] = Math.min(100, +c.slice(2));
+}
+function stopDemo() { if (demoTimer) { clearInterval(demoTimer); demoTimer = null; $('demo').classList.remove('on'); } }
+$('demo').onclick = () => {
+  if (demoTimer) { stopDemo(); setPill('', 'demo stopped'); return; }
+  $('demo').classList.add('on'); setPill('demo', 'demo data, not from the board'); log('demo started');
+  demoTimer = setInterval(() => {
+    for (let k = 0; k < 5; k++) {
+      D.t += 10; D.since += 10;
+      const period = 850 + 60 * Math.sin(D.t / 4000);
+      D.phase += 10 / period; if (D.phase >= 1) D.phase -= 1;
+      const p = D.phase;
+      const wave = (p < 0.15 ? p / 0.15 : Math.exp(-(p - 0.15) * 4)) + 0.25 * Math.exp(-((p - 0.45) ** 2) / 0.004);
+      const s = 8 * (wave - 0.45) + (Math.random() - 0.5) * 0.4;
+      D.env = s > D.env ? s : D.env * 0.995; const th = 0.5 * D.env;
+      if (s < 0) D.armed = 1;
+      let beat = 0, ibi = 0;
+      if (D.armed && s > th && D.since >= 300) {
+        D.armed = 0; beat = 1; D.flash = 8;
+        if (D.last) { ibi = D.since; D.ibis.push(ibi); if (D.ibis.length > 5) D.ibis.shift(); }
+        D.last = 1; D.since = 0;
+      } else if (D.flash) D.flash--;
+      const med = D.ibis.length >= 2 ? [...D.ibis].sort((a, b) => a - b)[D.ibis.length >> 1] : 0;
+      const bpm10 = med ? Math.round(600000 / med) : 0;
+      if (D.t >= D.btnT) {
+        D.btn = D.btn ? 0 : 1 << Math.floor(Math.random() * 4); D.btnT = D.t + (D.btn ? 180 : 1500 + Math.random() * 2500);
+        if (D.btn) {                                  // same mapping as the firmware
+          const k = Math.log2(D.btn), led = [1, 0, 1, 0][k], step = [-10, -10, 10, 10][k];
+          D.s[led] = Math.max(0, Math.min(100, D.s[led] + step)); D.prev[led] = D.t + 600;
+        }
+      }
+      const lit = i => D.m[i] === 1 || (D.m[i] === 2 && D.flash > 0) || D.t < D.prev[i] ? 1 : 0;
+      const r = Math.round((2100 - 3 * wave + 20 * Math.sin(D.t / 3000)) * 16);
+      onLine(['P', D.t, r, Math.round(s * 100), Math.round(th * 100), bpm10, beat, ibi, bpm10 ? 3 : 2, 1, D.btn, lit(0), lit(1)].join(','));
+      if (D.t % 100 === 0) {
+        const pot = Math.round(2047 + 2000 * Math.sin(D.t / 2500));
+        onLine(['S', D.t, pot, D.pol, D.beep, D.m[0], D.m[1], D.s[0], D.s[1], Math.floor(pot * 50 / 4095)].join(','));
+      }
+    }
+  }, 50);
+};
+
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>

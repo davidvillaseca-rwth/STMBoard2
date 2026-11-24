@@ -1,0 +1,178 @@
+#include "main.h"
+#include <stdio.h>
+#include <string.h>
+
+/* Analog finder: reads all six Arduino analog pins (A0..A5) 100 times a second
+   and streams them to analog_finder.html (or PuTTY).
+   Used to find out what the bottom-left sensor block (LED1 + square detector)
+   is wired to. The previous debug platform is saved in Claude/main_debug_platform.c.
+
+   Line format:  A,ms,a0,a1,a2,a3,a4,a5   (each value = sum of 16 conversions, 0..65520)
+
+   Pin      MCU   ADC
+   A0       PA0   ADC1_IN1
+   A1       PA1   ADC1_IN2   (pot)
+   A2       PA4   ADC2_IN17  (only on ADC2)
+   A3       PB0   ADC1_IN15
+   A4       PC1   ADC1_IN7
+   A5       PC0   ADC1_IN6                                                     */
+
+#define N_AVG 16
+
+static UART_HandleTypeDef hlpuart1;
+ADC_HandleTypeDef hadc1;
+ADC_HandleTypeDef hadc2;
+
+void SystemClock_Config(void);
+void Error_Handler(void);
+
+static void uart_init(void)
+{
+  GPIO_InitTypeDef g = {0};
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_LPUART1_CLK_ENABLE();
+  g.Pin = GPIO_PIN_2 | GPIO_PIN_3;
+  g.Mode = GPIO_MODE_AF_PP;
+  g.Pull = GPIO_NOPULL;
+  g.Speed = GPIO_SPEED_FREQ_LOW;
+  g.Alternate = GPIO_AF12_LPUART1;
+  HAL_GPIO_Init(GPIOA, &g);
+
+  hlpuart1.Instance = LPUART1;
+  hlpuart1.Init.BaudRate = 115200;
+  hlpuart1.Init.WordLength = UART_WORDLENGTH_8B;
+  hlpuart1.Init.StopBits = UART_STOPBITS_1;
+  hlpuart1.Init.Parity = UART_PARITY_NONE;
+  hlpuart1.Init.Mode = UART_MODE_TX_RX;
+  hlpuart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  hlpuart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  hlpuart1.Init.ClockPrescaler = UART_PRESCALER_DIV1;
+  hlpuart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&hlpuart1) != HAL_OK) Error_Handler();
+}
+
+static void tx(const char *s, int n) { HAL_UART_Transmit(&hlpuart1, (uint8_t *)s, (uint16_t)n, 100); }
+
+static void adc_one_init(ADC_HandleTypeDef *h, ADC_TypeDef *inst)
+{
+  h->Instance = inst;
+  h->Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+  h->Init.Resolution = ADC_RESOLUTION_12B;
+  h->Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  h->Init.GainCompensation = 0;
+  h->Init.ScanConvMode = ADC_SCAN_DISABLE;
+  h->Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  h->Init.LowPowerAutoWait = DISABLE;
+  h->Init.ContinuousConvMode = DISABLE;
+  h->Init.NbrOfConversion = 1;
+  h->Init.DiscontinuousConvMode = DISABLE;
+  h->Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  h->Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  h->Init.DMAContinuousRequests = DISABLE;
+  h->Init.Overrun = ADC_OVR_DATA_PRESERVED;
+  h->Init.OversamplingMode = DISABLE;
+  if (HAL_ADC_Init(h) != HAL_OK) Error_Handler();
+  if (HAL_ADCEx_Calibration_Start(h, ADC_SINGLE_ENDED) != HAL_OK) Error_Handler();
+}
+
+static void adc_init(void)
+{
+  GPIO_InitTypeDef g = {0};
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  g.Mode = GPIO_MODE_ANALOG;
+  g.Pull = GPIO_NOPULL;
+  g.Pin = GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_4; HAL_GPIO_Init(GPIOA, &g);   /* A0 A1 A2 */
+  g.Pin = GPIO_PIN_0;                           HAL_GPIO_Init(GPIOB, &g);   /* A3 */
+  g.Pin = GPIO_PIN_0 | GPIO_PIN_1;              HAL_GPIO_Init(GPIOC, &g);   /* A5 A4 */
+
+  adc_one_init(&hadc1, ADC1);   /* first: its MSP init sets up the shared ADC12 clock */
+  adc_one_init(&hadc2, ADC2);
+}
+
+/* sum of N_AVG conversions of one channel; long sampling time for high-impedance sources */
+static uint32_t adc_sum(ADC_HandleTypeDef *h, uint32_t ch)
+{
+  ADC_ChannelConfTypeDef c = {0};
+  c.Channel = ch;
+  c.Rank = ADC_REGULAR_RANK_1;
+  c.SamplingTime = ADC_SAMPLETIME_247CYCLES_5;
+  c.SingleDiff = ADC_SINGLE_ENDED;
+  c.OffsetNumber = ADC_OFFSET_NONE;
+  c.Offset = 0;
+  HAL_ADC_ConfigChannel(h, &c);
+  uint32_t sum = 0;
+  for (int i = 0; i < N_AVG; i++) {
+    HAL_ADC_Start(h);
+    HAL_ADC_PollForConversion(h, 10);
+    sum += HAL_ADC_GetValue(h);
+    HAL_ADC_Stop(h);
+  }
+  return sum;
+}
+
+int main(void)
+{
+  char msg[96];
+  uint32_t last = 0;
+
+  HAL_Init();
+  SystemClock_Config();
+  uart_init();
+  adc_init();
+
+  const char *hello = "# analog finder ready: A,ms,a0,a1,a2,a3,a4,a5\r\n";
+  tx(hello, (int)strlen(hello));
+
+  while (1)
+  {
+    uint32_t now = HAL_GetTick();
+    if (now - last < 10) continue;          /* 100 lines per second */
+    last = now;
+    uint32_t a0 = adc_sum(&hadc1, ADC_CHANNEL_1);
+    uint32_t a1 = adc_sum(&hadc1, ADC_CHANNEL_2);
+    uint32_t a2 = adc_sum(&hadc2, ADC_CHANNEL_17);
+    uint32_t a3 = adc_sum(&hadc1, ADC_CHANNEL_15);
+    uint32_t a4 = adc_sum(&hadc1, ADC_CHANNEL_7);
+    uint32_t a5 = adc_sum(&hadc1, ADC_CHANNEL_6);
+    int n = snprintf(msg, sizeof msg, "A,%lu,%lu,%lu,%lu,%lu,%lu,%lu\r\n",
+                     (unsigned long)now, (unsigned long)a0, (unsigned long)a1, (unsigned long)a2,
+                     (unsigned long)a3, (unsigned long)a4, (unsigned long)a5);
+    tx(msg, n);
+  }
+}
+
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1_BOOST);
+
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = RCC_PLLM_DIV4;
+  RCC_OscInitStruct.PLL.PLLN = 85;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
+  RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) Error_Handler();
+
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                              | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK) Error_Handler();
+}
+
+void Error_Handler(void)
+{
+  __disable_irq();
+  while (1) {}
+}

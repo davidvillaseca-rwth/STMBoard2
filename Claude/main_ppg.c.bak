@@ -1,0 +1,371 @@
+#include "main.h"
+#include <stdio.h>
+#include <string.h>
+#include <math.h>
+
+/* PPG heart-rate monitor. Pulse sensor (bottom-left block, LED1 + detector) on A0 = PA0 = ADC1_IN1.
+   Page: Claude/ppg.html. Previous programs: the .c.bak files in Claude/
+
+   Signal chain
+     TIM6 interrupt, 500 Hz: 16 ADC conversions summed (long 247.5-cycle sampling)
+     -> 10-sample moving average (20 ms window = exactly one 50 Hz mains period, so mains
+        flicker from room light and its harmonics are cancelled) -> keep every 5th = 100 Hz
+     -> high-pass 0.5 Hz (removes the slow DC level and drift from pressure / breathing)
+     -> low-pass 4 Hz, 2nd-order Butterworth (removes remaining noise; heart rate is 0.7..3.3 Hz)
+     -> polarity: the steep edge of the pulse (systole) is made positive. Chosen automatically from
+        which slope direction is steeper, or forced from the page.
+     -> beat = signal rises through 50 % of its decaying peak envelope, after having been below 0,
+        at least 300 ms after the previous beat (max 200 BPM)
+     -> BPM = 60000 / median of the last 5 beat-to-beat intervals (robust to a missed / extra beat)
+
+   Line to the page, 100 per second:
+     P,ms,raw,filt,thr,bpm10,beat,ibi,q,pol,polmode,beep
+       raw    = 12-bit value x16 (0..65520), after the 50 Hz filter, before the high-pass
+       filt   = filtered signal x100, already multiplied by the polarity
+       thr    = beat threshold x100
+       bpm10  = heart rate x10, 0 = none
+       beat   = 1 on the line where a beat was detected;  ibi = its interval in ms (0 if none)
+       q      = 0 no pulse, 1 saturated, 2 searching, 3 good, 4 irregular
+       pol    = +1 / -1 in use;  polmode = 0 auto, 1 normal, -1 inverted;  beep = 0 / 1
+   Commands (single characters): i = cycle polarity auto -> normal -> inverted, b = beep on / off
+
+   LED2 (D6) flashes on every beat. Optional short beep on the buzzer (D9).                       */
+
+#define AMP_MIN     1.5f    /* smallest pulse peak (12-bit ADC counts) accepted as a real pulse */
+#define REFRACT     30      /* samples at 100 Hz = 300 ms between beats */
+#define NO_BEAT     300     /* samples at 100 Hz = 3 s without a beat -> BPM cleared */
+#define BEEP_HZ     2000
+#define BEEP_VOL    10      /* % duty */
+
+#define LED2_Pin       GPIO_PIN_10   /* D6 */
+#define LED2_GPIO_Port GPIOB
+
+static UART_HandleTypeDef hlpuart1;
+ADC_HandleTypeDef hadc1;
+
+void SystemClock_Config(void);
+void Error_Handler(void);
+
+/* ---------- output samples: filled in the interrupt, sent from the main loop ---------- */
+typedef struct { uint32_t ms; uint32_t raw; int32_t filt, thr; uint16_t bpm10, ibi; uint8_t beat, q; int8_t pol; } out_t;
+#define OUTN 32
+static volatile out_t outbuf[OUTN];
+static volatile uint8_t outh = 0, outt = 0;
+
+static volatile int8_t pol_mode = 0;     /* 0 auto, 1 normal, -1 inverted */
+static volatile uint8_t beep_on = 0;
+
+/* ---------- init ---------- */
+static void uart_init(void)
+{
+  GPIO_InitTypeDef g = {0};
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_LPUART1_CLK_ENABLE();
+  g.Pin = GPIO_PIN_2 | GPIO_PIN_3;
+  g.Mode = GPIO_MODE_AF_PP;
+  g.Pull = GPIO_NOPULL;
+  g.Speed = GPIO_SPEED_FREQ_LOW;
+  g.Alternate = GPIO_AF12_LPUART1;
+  HAL_GPIO_Init(GPIOA, &g);
+
+  hlpuart1.Instance = LPUART1;
+  hlpuart1.Init.BaudRate = 115200;
+  hlpuart1.Init.WordLength = UART_WORDLENGTH_8B;
+  hlpuart1.Init.StopBits = UART_STOPBITS_1;
+  hlpuart1.Init.Parity = UART_PARITY_NONE;
+  hlpuart1.Init.Mode = UART_MODE_TX_RX;
+  hlpuart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  hlpuart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  hlpuart1.Init.ClockPrescaler = UART_PRESCALER_DIV1;
+  hlpuart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&hlpuart1) != HAL_OK) Error_Handler();
+}
+
+static void tx(const char *s, int n) { HAL_UART_Transmit(&hlpuart1, (uint8_t *)s, (uint16_t)n, 100); }
+
+static void adc_init(void)
+{
+  hadc1.Instance = ADC1;                         /* PA0 analog + ADC clock: HAL_ADC_MspInit */
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.GainCompensation = 0;
+  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  hadc1.Init.LowPowerAutoWait = DISABLE;
+  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc1.Init.DMAContinuousRequests = DISABLE;
+  hadc1.Init.Overrun = ADC_OVR_DATA_OVERWRITTEN;
+  hadc1.Init.OversamplingMode = DISABLE;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK) Error_Handler();
+  if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK) Error_Handler();
+
+  ADC_ChannelConfTypeDef c = {0};
+  c.Channel = ADC_CHANNEL_1;
+  c.Rank = ADC_REGULAR_RANK_1;
+  c.SamplingTime = ADC_SAMPLETIME_247CYCLES_5;
+  c.SingleDiff = ADC_SINGLE_ENDED;
+  c.OffsetNumber = ADC_OFFSET_NONE;
+  c.Offset = 0;
+  if (HAL_ADC_ConfigChannel(&hadc1, &c) != HAL_OK) Error_Handler();
+
+  /* one conversion through HAL enables the ADC; after that the interrupt starts conversions directly */
+  HAL_ADC_Start(&hadc1);
+  HAL_ADC_PollForConversion(&hadc1, 10);
+  (void)HAL_ADC_GetValue(&hadc1);
+}
+
+static void led_init(void)
+{
+  GPIO_InitTypeDef g = {0};
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  g.Mode = GPIO_MODE_OUTPUT_PP;
+  g.Pull = GPIO_NOPULL;
+  g.Speed = GPIO_SPEED_FREQ_LOW;
+  g.Pin = LED2_Pin;
+  HAL_GPIO_Init(LED2_GPIO_Port, &g);
+}
+
+static void buzzer_init(void)          /* D9 = PC7 = TIM3_CH2, 1 MHz tick */
+{
+  GPIO_InitTypeDef g = {0};
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  g.Pin = GPIO_PIN_7;
+  g.Mode = GPIO_MODE_AF_PP;
+  g.Pull = GPIO_NOPULL;
+  g.Speed = GPIO_SPEED_FREQ_LOW;
+  g.Alternate = GPIO_AF2_TIM3;
+  HAL_GPIO_Init(GPIOC, &g);
+
+  RCC->APB1ENR1 |= RCC_APB1ENR1_TIM3EN;
+  (void)RCC->APB1ENR1;
+  TIM3->PSC  = 169;
+  TIM3->ARR  = 1000000u / BEEP_HZ - 1u;
+  TIM3->CCR2 = 0;
+  TIM3->CCMR1 = (6u << TIM_CCMR1_OC2M_Pos) | TIM_CCMR1_OC2PE;
+  TIM3->CCER = TIM_CCER_CC2E;
+  TIM3->CR1  = TIM_CR1_ARPE | TIM_CR1_CEN;
+  TIM3->EGR  = TIM_EGR_UG;
+}
+
+static void tim6_init(void)            /* 500 Hz sample clock */
+{
+  RCC->APB1ENR1 |= RCC_APB1ENR1_TIM6EN;
+  (void)RCC->APB1ENR1;
+  TIM6->PSC = 169;                     /* 1 MHz */
+  TIM6->ARR = 1999;                    /* 500 Hz */
+  TIM6->EGR = TIM_EGR_UG;
+  TIM6->SR = 0;
+  TIM6->DIER = TIM_DIER_UIE;
+  NVIC_SetPriority(TIM6_DAC_IRQn, 2);
+  NVIC_EnableIRQ(TIM6_DAC_IRQn);
+  TIM6->CR1 = TIM_CR1_CEN;
+}
+
+/* ---------- 4 Hz low-pass coefficients (2nd-order Butterworth, fs = 100 Hz) ---------- */
+static float lp_b0, lp_b1, lp_b2, lp_a1, lp_a2;
+static void lp_design(float fc, float fs)
+{
+  float k = tanf(3.14159265f * fc / fs);
+  float n = 1.0f / (1.0f + 1.41421356f * k + k * k);
+  lp_b0 = k * k * n;
+  lp_b1 = 2.0f * lp_b0;
+  lp_b2 = lp_b0;
+  lp_a1 = 2.0f * (k * k - 1.0f) * n;
+  lp_a2 = (1.0f - 1.41421356f * k + k * k) * n;
+}
+#define HP_A 0.969f                    /* 1st-order high-pass, fc = (1 - a) * fs / (2 pi) = 0.49 Hz */
+
+/* ---------- 100 Hz processing: filters, polarity, beat detection ---------- */
+static void process(float x, uint32_t raw16)
+{
+  static int init = 0;
+  static float hp_x, hp_y, x1, x2, y1, y2, y_prev;
+  static float penv, nenv, env;
+  static int8_t pol = 1;
+  static int armed = 0;
+  static uint32_t since = NO_BEAT, n = 0, led_cnt = 0, beep_cnt = 0;
+  static uint16_t ibis[5];
+  static uint8_t nibi = 0, ibi_i = 0;
+  static uint16_t bpm10 = 0;
+  static int have_prev = 0;
+
+  n++;
+  if (!init) { hp_x = x; init = 1; }
+
+  /* high-pass, then low-pass */
+  hp_y = HP_A * (hp_y + x - hp_x);
+  hp_x = x;
+  float y = lp_b0 * hp_y + lp_b1 * x1 + lp_b2 * x2 - lp_a1 * y1 - lp_a2 * y2;
+  x2 = x1; x1 = hp_y; y2 = y1; y1 = y;
+
+  /* polarity: which edge is steeper (decaying max of the slope, ~3 s memory) */
+  float d = y - y_prev;
+  y_prev = y;
+  if (d > penv) penv = d; else penv *= 0.997f;
+  if (-d > nenv) nenv = -d; else nenv *= 0.997f;
+  if (pol_mode == 0) {
+    if (nenv > 1.25f * penv) pol = -1;
+    else if (penv > 1.25f * nenv) pol = 1;
+  } else pol = pol_mode;
+  float s = pol * y;
+
+  /* beat detection */
+  if (s > env) env = s; else env *= 0.995f;     /* peak envelope, ~2 s memory */
+  float thr = 0.5f * env;
+  if (since < 100000) since++;
+  if (s < 0) armed = 1;
+
+  uint8_t beat = 0;
+  uint16_t ibi = 0;
+  if (armed && s > thr && env > AMP_MIN && since >= REFRACT) {
+    armed = 0;
+    beat = 1;
+    if (have_prev && since <= 200) {           /* interval 300..2000 ms is plausible */
+      ibi = (uint16_t)(since * 10);
+      ibis[ibi_i] = ibi; ibi_i = (uint8_t)((ibi_i + 1) % 5);
+      if (nibi < 5) nibi++;
+    }
+    have_prev = 1;
+    since = 0;
+    led_cnt = 8;                               /* LED2 on for 80 ms */
+    if (beep_on) beep_cnt = 3;                 /* 30 ms beep */
+  }
+  if (since > NO_BEAT) { nibi = 0; have_prev = 0; }
+
+  /* BPM from the median interval */
+  uint16_t med = 0, lo = 0xFFFF, hi = 0;
+  if (nibi >= 2) {
+    uint16_t t[5];
+    for (int i = 0; i < nibi; i++) { t[i] = ibis[i]; if (t[i] < lo) lo = t[i]; if (t[i] > hi) hi = t[i]; }
+    for (int i = 1; i < nibi; i++)            /* insertion sort, at most 5 values */
+      for (int j = i; j > 0 && t[j - 1] > t[j]; j--) { uint16_t z = t[j]; t[j] = t[j - 1]; t[j - 1] = z; }
+    med = t[nibi / 2];
+    bpm10 = (uint16_t)(600000u / med);
+  } else bpm10 = 0;
+
+  /* quality */
+  uint8_t q;
+  if (raw16 < 40u * 16u || raw16 > 4050u * 16u) q = 1;          /* ADC at a rail */
+  else if (env < AMP_MIN) q = 0;
+  else if (!bpm10) q = 2;
+  else if (nibi >= 4 && (hi - lo) * 10 > med * 3) q = 4;         /* intervals spread > 30 % */
+  else q = 3;
+
+  /* LED2 and beep */
+  if (led_cnt) { led_cnt--; LED2_GPIO_Port->BSRR = LED2_Pin; }
+  else LED2_GPIO_Port->BSRR = (uint32_t)LED2_Pin << 16;
+  if (beep_cnt) { beep_cnt--; TIM3->CCR2 = (TIM3->ARR + 1u) * BEEP_VOL / 100u; }
+  else TIM3->CCR2 = 0;
+
+  /* hand to the main loop */
+  uint8_t nh = (uint8_t)((outh + 1) % OUTN);
+  if (nh != outt) {
+    volatile out_t *o = &outbuf[outh];
+    o->ms = n * 10; o->raw = raw16;
+    o->filt = (int32_t)(s * 100.0f); o->thr = (int32_t)(thr * 100.0f);
+    o->bpm10 = bpm10; o->ibi = ibi; o->beat = beat; o->q = q; o->pol = pol;
+    outh = nh;
+  }
+}
+
+/* ---------- 500 Hz sampling ---------- */
+void TIM6_DAC_IRQHandler(void)
+{
+  static uint32_t ma_buf[10], ma_sum = 0;
+  static uint8_t ma_i = 0, dec = 0, warm = 0;
+  TIM6->SR = 0;
+
+  uint32_t sum = 0;
+  for (int i = 0; i < 16; i++) {
+    LL_ADC_REG_StartConversion(ADC1);
+    while (!LL_ADC_IsActiveFlag_EOC(ADC1)) {}
+    sum += LL_ADC_REG_ReadConversionData12(ADC1);   /* reading clears EOC */
+  }
+
+  ma_sum += sum - ma_buf[ma_i];                     /* 20 ms moving average: cancels 50 Hz */
+  ma_buf[ma_i] = sum;
+  ma_i = (uint8_t)((ma_i + 1) % 10);
+  if (warm < 10) { warm++; return; }                /* wait until the average is full */
+
+  if (++dec < 5) return;                           /* 500 Hz -> 100 Hz */
+  dec = 0;
+  process((float)ma_sum / 160.0f, ma_sum / 10u);
+}
+
+int main(void)
+{
+  char msg[96];
+
+  HAL_Init();
+  SystemClock_Config();
+  led_init();
+  uart_init();
+  buzzer_init();
+  adc_init();
+  lp_design(4.0f, 100.0f);
+  tim6_init();
+
+  const char *hello = "# ppg ready: P,ms,raw,filt,thr,bpm10,beat,ibi,q,pol,polmode,beep\r\n";
+  tx(hello, (int)strlen(hello));
+
+  while (1)
+  {
+    while (outt != outh) {
+      out_t o;
+      memcpy(&o, (const void *)&outbuf[outt], sizeof o);
+      outt = (uint8_t)((outt + 1) % OUTN);
+      int n = snprintf(msg, sizeof msg, "P,%lu,%lu,%ld,%ld,%u,%u,%u,%u,%d,%d,%u\r\n",
+                       (unsigned long)o.ms, (unsigned long)o.raw, (long)o.filt, (long)o.thr,
+                       (unsigned)o.bpm10, (unsigned)o.beat, (unsigned)o.ibi, (unsigned)o.q,
+                       (int)o.pol, (int)pol_mode, (unsigned)beep_on);
+      tx(msg, n);
+    }
+
+    uint32_t isr = LPUART1->ISR;
+    if (isr & USART_ISR_ORE) LPUART1->ICR = USART_ICR_ORECF;
+    if (isr & USART_ISR_RXNE_RXFNE) {
+      char c = (char)LPUART1->RDR;
+      if (c == 'i') pol_mode = (pol_mode == 0) ? 1 : (pol_mode == 1) ? -1 : 0;
+      else if (c == 'b') beep_on = !beep_on;
+    }
+  }
+}
+
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1_BOOST);
+
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = RCC_PLLM_DIV4;
+  RCC_OscInitStruct.PLL.PLLN = 85;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
+  RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) Error_Handler();
+
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                              | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK) Error_Handler();
+}
+
+void Error_Handler(void)
+{
+  __disable_irq();
+  while (1) {}
+}
