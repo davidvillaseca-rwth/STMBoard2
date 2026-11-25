@@ -18,9 +18,9 @@
    Other parts
      Pot A1 = PA1, read on ADC2_IN2 (ADC1 is busy with the pulse sensor), 25 times a second.
        The pot sets the buzzer volume 0..50 % duty (50 = loudest); a short beep confirms each change.
-     Buttons (HIGH = pressed): LEFT D2 PA10, DOWN D3 PB3, RIGHT D4 PB5, UP D5 PB4, blue B1 PC13
+     Buttons (HIGH = pressed): LEFT D2 PA10, DOWN D3 PB3, RIGHT D4 PB5, UP D5 PB4
        UP / DOWN = LED2 brightness +10 / -10, RIGHT / LEFT = LED3 brightness +10 / -10
-       (hold to repeat; the LED lights for 0.6 s so you can see the new level). B1 = beat beep on / off.
+       (hold to repeat; the LED lights for 0.6 s so you can see the new level). The beat beep is switched on / off from the page.
      LED2 green D6 PB10, LED3 yellow D7 PA8: mode off / on / flash on each beat, brightness 0..100,
        start 10 (software PWM from TIM7 at 20 kHz, duty = s*s/100). Buzzer D9 PC7 TIM3_CH2.
      Serial: TX and RX are serviced from TIM7 (ring buffers), so the main loop never blocks.
@@ -29,7 +29,7 @@
      P,ms,raw,filt,thr,bpm10,beat,ibi,q,pol,btn,l2,l3          100 per second
        raw = 12-bit x16, filt / thr = x100, bpm10 = BPM x10, beat = 1 on a beat, ibi = interval ms,
        q = 0 no pulse, 1 saturated, 2 searching, 3 good, 4 irregular, pol = +1 / -1,
-       btn = bit 0 LEFT, 1 DOWN, 2 RIGHT, 3 UP, 4 B1;  l2 / l3 = LED lit right now (0 / 1)
+       btn = bit 0 LEFT, 1 DOWN, 2 RIGHT, 3 UP;  l2 / l3 = LED lit right now (0 / 1)
      S,ms,pot,polmode,beep,m2,m3,s2,s3,vol                       10 per second
        pot = 0..4095, polmode = 0 auto / 1 normal / -1 inverted, m2 / m3 = LED mode 0 off 1 on 2 beat,
        s2 / s3 = brightness 0..100, vol = buzzer volume 0..50 (% duty)
@@ -221,18 +221,15 @@ static void gpio_init(void)
   g.Pull = GPIO_PULLUP;
   g.Pin = GPIO_PIN_10;                         HAL_GPIO_Init(GPIOA, &g);   /* LEFT  */
   g.Pin = GPIO_PIN_3 | GPIO_PIN_4 | GPIO_PIN_5; HAL_GPIO_Init(GPIOB, &g);   /* DOWN, UP, RIGHT */
-  g.Pull = GPIO_NOPULL;
-  g.Pin = GPIO_PIN_13;                         HAL_GPIO_Init(GPIOC, &g);   /* B1 */
 }
 
-static uint32_t buttons(void)           /* bit 0 LEFT, 1 DOWN, 2 RIGHT, 3 UP, 4 B1 */
+static uint32_t buttons(void)           /* bit 0 LEFT, 1 DOWN, 2 RIGHT, 3 UP */
 {
   uint32_t m = 0;
   if (GPIOA->IDR & GPIO_PIN_10) m |= 1;
   if (GPIOB->IDR & GPIO_PIN_3)  m |= 2;
   if (GPIOB->IDR & GPIO_PIN_5)  m |= 4;
   if (GPIOB->IDR & GPIO_PIN_4)  m |= 8;
-  if (GPIOC->IDR & GPIO_PIN_13) m |= 16;
   return m;
 }
 
@@ -465,7 +462,7 @@ int main(void)
   char msg[128];
   char cmd[12];
   uint8_t cl = 0;
-  uint32_t pot = 0, last_pot = 0, last_s = 0, prev_btn = 0, b1_lock = 0, beep_next = 0;
+  uint32_t pot = 0, last_pot = 0, last_s = 0, beep_next = 0;
 
   HAL_Init();
   SystemClock_Config();
@@ -484,13 +481,6 @@ int main(void)
   {
     uint32_t now = HAL_GetTick();
     uint32_t btn = buttons();
-
-    /* B1: beep on / off (rising edge, 150 ms lock-out against bounce) */
-    if ((btn & 16) && !(prev_btn & 16) && (int32_t)(now - b1_lock) >= 0) {
-      b1_lock = now + 150;
-      beep_on = !beep_on;
-    }
-    prev_btn = btn;
     dpad(btn, now);
 
     if (now - last_pot >= 40) {                    /* pot -> buzzer volume */

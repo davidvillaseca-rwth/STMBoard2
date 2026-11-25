@@ -29,7 +29,7 @@ A few things that took a while to find out:
 
 - A0 is the pulse sensor and A1 is the potentiometer. A2 to A5 aren't connected to anything on the shield.
 - The buzzer is on D9 (PC7, TIM3 channel 2), not D10.
-- Every button reads HIGH when pressed, including the Nucleo's blue B1.
+- Every D-pad button reads HIGH when pressed.
 - LED1, the infrared emitter under the pulse sensor, is always on. You can barely see it by eye, but a phone camera shows it clearly.
 - The 0.96" OLED outline on the shield is only a footprint. No display is fitted.
 
@@ -78,7 +78,7 @@ To look at the page without the board, click Demo. It generates a fake pulse, ra
 | UP / DOWN | LED2 (green) brightness +10 / -10 % |
 | RIGHT / LEFT | LED3 (yellow) brightness +10 / -10 % |
 | Hold a D-pad key | Repeats, first after 450 ms, then every 150 ms. The LED lights for 0.6 s so you can see the new level. |
-| B1 (blue, on the Nucleo) | Beep on every heartbeat, on or off |
+| Page: Buzzer button | Beep on every heartbeat, on or off |
 | Potentiometer | Buzzer volume, from silent to loudest. A short beep plays at each new level. |
 | Page: LED mode | Off, On, or Beat (flashes on each heartbeat) |
 | Page: brightness sliders | 0 to 100 %. Both LEDs start at 10 %. |
@@ -104,7 +104,7 @@ P,ms,raw,filt,thr,bpm10,beat,ibi,q,pol,btn,l2,l3
 | beat, ibi | 1 on a detected beat, with its interval in ms |
 | q | 0 no pulse, 1 saturated, 2 searching, 3 good, 4 irregular |
 | pol | +1 or -1, the polarity in use |
-| btn | bit 0 LEFT, 1 DOWN, 2 RIGHT, 3 UP, 4 B1 |
+| btn | bit 0 LEFT, 1 DOWN, 2 RIGHT, 3 UP |
 | l2, l3 | whether each LED is lit right now |
 
 Board to PC, 10 lines per second:

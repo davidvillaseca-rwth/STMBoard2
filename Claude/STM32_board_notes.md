@@ -21,7 +21,6 @@ HSI 16 MHz -> PLL: PLLM /4, PLLN x85, PLLR /2 -> **170 MHz** SYSCLK. AHB, APB1 a
 | Function | Header pin | MCU pin | Peripheral | Status |
 |---|---|---|---|---|
 | Nucleo green LED (LD2) | D13 | PA5 | GPIO | confirmed |
-| Nucleo blue button (B1) | none | PC13 | GPIO input | confirmed: reads HIGH when pressed |
 | Serial TX / RX (ST-LINK VCP) | none | PA2 / PA3 | LPUART1, AF12 | confirmed |
 | Pulse sensor signal | A0 | PA0 | ADC1_IN1 | confirmed (analog) |
 | Potentiometer | A1 | PA1 | ADC1_IN2 | confirmed |
@@ -121,15 +120,15 @@ One sixteenth note = 15000 / BPM ms. The pot sets 40..160 BPM, smoothed `(3 * ol
       - RIGHT / LEFT change LED3 brightness by +10 / −10.
       - Holding a key repeats it (first after 450 ms, then every 150 ms), with a 150 ms lock-out against bounce.
       - After a change the LED lights for 0.6 s, so you can see the new level even if its mode is off.
-      - B1 toggles the beat beep.
+      - The beat beep is switched on and off from the page.
     - **LEDs:** each has a mode (off / on / flash on beat) and a brightness. Both start at brightness **10**, which is 1 % duty with the `s*s/100` curve. They are dimmed in software from TIM7 at 20 kHz.
     - **Serial:** TX and RX also run from TIM7 through ring buffers, so the main loop never blocks.
     - **Lines:**
-      - `P,ms,raw,filt,thr,bpm10,beat,ibi,q,pol,btn,l2,l3` at 100 per second. `btn` bits: 0 LEFT, 1 DOWN, 2 RIGHT, 3 UP, 4 B1. `l2` / `l3` are whether each LED is lit right now.
+      - `P,ms,raw,filt,thr,bpm10,beat,ibi,q,pol,btn,l2,l3` at 100 per second. `btn` bits: 0 LEFT, 1 DOWN, 2 RIGHT, 3 UP. `l2` / `l3` are whether each LED is lit right now.
       - `S,ms,pot,polmode,beep,m2,m3,s2,s3,vol` at 10 per second. `vol` is 0..50 % duty.
     - **Commands:** `i`, `b`, `2m0/1/2`, `3m0/1/2`, `2:NN`, `3:NN`, one per line.
     - **Timer priorities:** TIM7 is 1 and TIM6 is 2, so LED PWM and serial keep running during the ~100 µs ADC burst.
-    - **Page:** heart-rate card, a shield panel (D-pad and B1, pot dial, LED bulbs with mode and brightness controls, buzzer), waveform, raw level, tachogram and an event log. It has a Demo mode.
+    - **Page:** heart-rate card, a shield panel (D-pad, pot dial, LED bulbs with mode and brightness controls, buzzer), waveform, raw level, tachogram and an event log. It has a Demo mode.
 12. **PPG heart-rate monitor** (`Claude/main_ppg.c.bak`):
     - TIM6 interrupt at 500 Hz: 16 conversions of A0 (247.5-cycle sampling).
     - 10-sample moving average = 20 ms window, which cancels 50 Hz mains flicker and its harmonics. Then decimated to 100 Hz.
